@@ -14,6 +14,7 @@ const Index = () => {
   const [summary, setSummary] = useState<string | null>(null);
   const [flashcards, setFlashcards] = useState<Array<{ question: string; answer: string }> | null>(null);
   const [quiz, setQuiz] = useState<Array<{ question: string; options: string[]; answer: string }> | null>(null);
+  const API_BASE = import.meta.env.VITE_API_BASE || '';
 
   const handleGenerate = async () => {
     if (!selectedFile || !selectedTool) return;
@@ -28,7 +29,7 @@ const Index = () => {
       // 1) Upload file and get extracted text
       const form = new FormData();
       form.append('file', selectedFile);
-      const uploadRes = await fetch('/api/upload', {
+      const uploadRes = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
         body: form,
       });
@@ -40,7 +41,7 @@ const Index = () => {
 
       // 2) Call tool-specific endpoint
       if (selectedTool === 'summary') {
-        const res = await fetch('/api/summarize', {
+        const res = await fetch(`${API_BASE}/api/summarize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, sentences: 6 }),
@@ -49,7 +50,7 @@ const Index = () => {
         const data = await res.json();
         setSummary(data.summary);
       } else if (selectedTool === 'flashcards') {
-        const res = await fetch('/api/flashcards', {
+        const res = await fetch(`${API_BASE}/api/flashcards`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, count: 8 }),
@@ -58,7 +59,7 @@ const Index = () => {
         const data = await res.json();
         setFlashcards(data.cards);
       } else if (selectedTool === 'mcqs') {
-        const res = await fetch('/api/quiz', {
+        const res = await fetch(`${API_BASE}/api/quiz`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, count: 5 }),

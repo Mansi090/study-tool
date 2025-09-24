@@ -1,72 +1,118 @@
 # Studyy Tool Backend (Express)
 
-A minimal backend for the Studyy Tool app, built with Node.js + Express. It provides endpoints for health check, file upload and parsing (PDF/DOCX/TXT), and basic local AI-like utilities for summarization, flashcards, and quizzes (no external AI key required).
+A minimal backend for the Studyy Tool app, built with Node.js + Express. It provides endpoints for health check, file upload and parsing (PDF/DOCX/TXT/MD), and AI-powered or heuristic generation for summaries, flashcards, and quizzes.
+
+## Features
+
+- PDF text extraction via `pdfjs-dist`
+- DOCX text extraction via `mammoth`
+- TXT/MD ingestion
+- AI generation when an API key is configured, otherwise a fast heuristic fallback
+- Robust error handling and file-size limits
 
 ## Endpoints
 
-- GET `/api/health`
-- POST `/api/upload` (multipart/form-data; field name: `file`) → Extracts text from PDF/DOCX/TXT/MD
-- POST `/api/summarize` (JSON: `{ text: string, sentences?: number }`)
-- POST `/api/flashcards` (JSON: `{ text: string, count?: number }`)
-- POST `/api/quiz` (JSON: `{ text: string, count?: number }`)
+- `GET /api/health` — Service status
+- `POST /api/upload` — multipart/form-data (field: `file`), extracts text and returns `{ text, textLength }`
+- `POST /api/summarize` — JSON `{ text: string, sentences?: number }`
+- `POST /api/flashcards` — JSON `{ text: string, count?: number }`
+- `POST /api/quiz` — JSON `{ text: string, count?: number }`
 
-## Quickstart
+## Project Structure
+
+- `src/index.js` — Express app bootstrap
+- `src/routes/api.js` — API routes and file parsing logic
+- `src/services/ai.js` — AI helpers (OpenAI/OpenRouter support) and heuristic fallbacks
+
+## Requirements
+
+- Node.js 18+ (Node 20+ recommended)
+- npm 9+
+
+## Local Setup
 
 1. Install dependencies:
    ```bash
    npm install
    ```
-2. Start dev server (with auto-reload via nodemon):
+2. Copy environment file and fill in values:
+   ```bash
+   cp .env.example .env
+   ```
+3. Start dev server (auto-reloads via nodemon):
    ```bash
    npm run dev
    ```
-   The server runs on http://localhost:3001 by default.
-
-The frontend (`vite.config.ts`) is configured to proxy `/api` to `http://localhost:3001` during development, so you can call `/api/...` directly from the React app.
+   The server runs on `http://localhost:3001` by default.
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` to configure the backend and AI:
+Create `.env` in `backend/` (see `.env.example`). Supported variables:
 
-- `PORT` (default: 3001)
-- `OPENAI_API_KEY` (optional but recommended) — enables real AI generation.
-- `OPENAI_MODEL` (optional, default: `gpt-4o-mini`) — model to use.
+- `PORT` — Port to listen on (default: `3001`). Hosting platforms usually inject this.
+- If using OpenAI:
+  - `OPENAI_API_KEY` — OpenAI API key (enables real AI generation).
+  - `OPENAI_MODEL` — Model to use (default: `gpt-4o-mini`).
+- If using OpenRouter instead of OpenAI:
+  - `OPENROUTER_API_KEY` — OpenRouter API key.
+  - `OPENROUTER_MODEL` — e.g. `deepseek/deepseek-chat-v3.1:free`.
 
-## Example Requests
+Without any key set, the service falls back to a local heuristic for summaries/flashcards/quizzes.
 
-- Health:
-  ```bash
-  curl http://localhost:3001/api/health
-  ```
+## File Parsing Notes
 
-- Upload a PDF/DOCX/TXT:
-  ```bash
-  curl -F "file=@/path/to/file.pdf" http://localhost:3001/api/upload
-  ```
+- PDF parsing uses `pdfjs-dist`: pages are iterated and text items concatenated.
+- DOCX parsing uses `mammoth.extractRawText`.
+- Plain text/markdown is read as UTF-8.
 
-- Summarize:
-  ```bash
-  curl -X POST http://localhost:3001/api/summarize \
-    -H "Content-Type: application/json" \
-    -d '{"text":"Your text here","sentences":5}'
-  ```
+## Running Scripts
 
-- Flashcards:
-  ```bash
-  curl -X POST http://localhost:3001/api/flashcards \
-    -H "Content-Type: application/json" \
-    -d '{"text":"Your text here","count":8}'
-  ```
+- `npm run dev` — Start with nodemon (development)
+- `npm start` — Start with Node (production)
 
-- Quiz:
-  ```bash
-  curl -X POST http://localhost:3001/api/quiz \
-    -H "Content-Type: application/json" \
-    -d '{"text":"Your text here","count":5}'
-  ```
+## Deployment
 
-## Notes
+You can deploy the backend to any Node-capable host. Two simple options:
 
-- PDF parsing uses `pdf-parse`.
-- DOCX parsing uses `mammoth`.
-- If `OPENAI_API_KEY` is set, the backend sends extracted text to OpenAI with carefully designed prompts and returns structured JSON results. Without it, a local heuristic fallback is used.
+### Render
+
+- Create a new Web Service from this repo.
+- Settings:
+  - Root Directory: `backend`
+  - Build Command: `npm install`
+  - Start Command: `npm start`
+  - Node Version: 20+
+  - Environment: add `OPENAI_API_KEY` or `OPENROUTER_API_KEY` if desired. `PORT` is auto-set by Render.
+- Deploy and note the service URL, e.g. `https://studyy-tool-backend.onrender.com`.
+
+### Railway
+
+- Create a new service from GitHub.
+- Set Root to `backend/` and use the same build/start commands.
+- Add environment variables as needed.
+- Deploy and copy the public URL.
+
+## CORS
+
+The app uses `cors({ origin: true })` during development to simplify testing. For production, restrict origins to your frontend domain, e.g.:
+
+```js
+import cors from 'cors';
+app.use(cors({ origin: ['https://your-frontend.example'] }));
+```
+
+## Troubleshooting
+
+- `ERR_MODULE_NOT_FOUND` for a package:
+  - Ensure you ran `npm install` inside the `backend/` directory.
+  - Verify the dependency exists in `backend/package.json`.
+
+- PDF parsing issues:
+  - Large or scanned PDFs may contain limited text. Try a text-based PDF.
+
+- 413 Payload Too Large on upload:
+  - The upload limit is set to 20MB in `multer`. Reduce file size or increase the limit if needed.
+
+## License
+
+MIT (or your chosen license)
