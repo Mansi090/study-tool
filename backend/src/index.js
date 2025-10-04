@@ -1,7 +1,3 @@
-
-dotenv.config();
-console.log('OPENROUTER_API_KEY loaded:', !!process.env.OPENROUTER_API_KEY);
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -10,72 +6,22 @@ import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { aiSummarize, aiFlashcards, aiQuiz } from './services/ai.js';
 
+// Load env vars immediately
+dotenv.config();
+console.log('OPENROUTER_API_KEY loaded:', !!process.env.OPENROUTER_API_KEY);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: '5mb' }));
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Multer config for file uploads
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-});
+// Multer for file uploads
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-// ----------------- Heuristic Utilities -----------------
-
-function textSummary(text, maxSentences = 5) {
-  if (!text) return '';
-  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(s => s.length > 20);
-  if (sentences.length <= maxSentences) return sentences.join(' ');
-
-  const scored = sentences.map((s, idx) => ({
-    s,
-    score: s.length / 200 + (1 - idx / sentences.length),
-  }));
-
-  return scored.sort((a, b) => b.score - a.score).slice(0, maxSentences).map(x => x.s).join(' ');
-}
-
-function generateFlashcards(text, count = 8) {
-  const lines = text.split(/[\n.]/).map(l => l.trim()).filter(Boolean);
-  const cards = [];
-  for (let line of lines) {
-    if (cards.length >= count) break;
-    if (line.length < 30) continue;
-    const [first, ...rest] = line.split(':');
-    if (rest.length) cards.push({ question: `What is "${first.trim()}"?`, answer: rest.join(':').trim() });
-    else if (line.includes(' is ')) {
-      const [subject, def] = line.split(' is ');
-      if (subject && def) cards.push({ question: `What is ${subject.trim()}?`, answer: def.trim() });
-    }
-  }
-  while (cards.length < count && text.length > 0) {
-    const idx = Math.floor(Math.random() * (text.length - 120));
-    cards.push({ question: 'Explain this snippet:', answer: text.slice(idx, idx + 120) + '…' });
-  }
-  return cards.slice(0, count);
-}
-
-function generateQuiz(text, count = 5) {
-  const sentences = text.split(/(?<=[.!?])\s+/).filter(s => s.split(' ').length > 6);
-  const qs = [];
-  for (let s of sentences) {
-    if (qs.length >= count) break;
-    const words = s.split(/\s+/);
-    const idx = Math.floor(words.length / 3 + Math.random() * words.length / 3);
-    const answer = words[idx].replace(/[^a-z0-9-]/gi, '');
-    if (!answer) continue;
-    const prompt = [...words]; prompt[idx] = '____';
-    qs.push({ question: prompt.join(' '), options: ['concept','process','model',answer].sort(() => Math.random()-0.5), answer });
-  }
-  return qs;
-}
-
-// ----------------- File Extraction -----------------
-
+// ----------------- File extraction -----------------
 async function extractTextFromFile(file) {
   const { originalname, mimetype, buffer } = file;
   const ext = (originalname.split('.').pop() || '').toLowerCase();
@@ -96,89 +42,70 @@ async function extractTextFromFile(file) {
     return value || '';
   }
 
-  if (mimetype?.startsWith('text/') || ['txt','md'].includes(ext)) return buffer.toString('utf-8');
+  if (mimetype?.startsWith('text/') || ['txt', 'md'].includes(ext)) return buffer.toString('utf-8');
 
   throw new Error(`Unsupported file type: ${mimetype || ext}`);
 }
 
 // ----------------- Routes -----------------
+app.get('/', (_req, res) => res.send('Studyy Buddy API is live!'));
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-// Upload
-app.post('/api/upload', (req, res) => {
-  upload.single('file')(req, res, async err => {
-    if (err) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.message });
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded. Use field name "file".' });
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    try {
-      const text = await extractTextFromFile(req.file);
-      return res.json({ textLength: text.length, text: text.slice(0, 20000) });
-    } catch (e) {
-      console.error(e);
-      return res.status(400).json({ error: e.message || 'Failed to parse file' });
-    }
-  });
+  try {
+    const text = await extractTextFromFile(req.file);
+    res.json({ textLength: text.length, text: text.slice(0, 20000) });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Failed to parse file' });
+  }
 });
 
-// Summarize
 app.post('/api/summarize', async (req, res) => {
   const { text, sentences = 5, trackSources = false } = req.body || {};
-  if (!text) return res.status(400).json({ error: 'Missing "text" in body' });
+  if (!text) return res.status(400).json({ error: 'Missing "text"' });
 
   try {
-    if (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY) {
-      const summary = await aiSummarize(text, { sentences, trackSources });
-      return res.json({ summary });
-    } else {
-      const summary = textSummary(text, sentences);
-      return res.json({ summary, note: 'Heuristic summary used (no AI API key set)' });
-    }
+    const summary = (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY)
+      ? await aiSummarize(text, { sentences, trackSources })
+      : text.slice(0, 500); // fallback
+    res.json({ summary });
   } catch (e) {
-    console.error('Summarize error:', e);
-    return res.status(500).json({ error: 'Failed to generate summary: ' + e.message });
+    res.status(500).json({ error: e.message });
   }
 });
 
-// Flashcards
 app.post('/api/flashcards', async (req, res) => {
-  const { text, count = 8, trackSources = false } = req.body || {};
-  if (!text) return res.status(400).json({ error: 'Missing "text" in body' });
+  const { text, count = 8 } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'Missing "text"' });
 
   try {
-    if (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY) {
-      const result = await aiFlashcards(text, { count, trackSources });
-      return res.json(result);
-    } else {
-      const cards = generateFlashcards(text, count);
-      return res.json({ cards, note: 'Heuristic flashcards used (no AI API key set)' });
-    }
+    const result = (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY)
+      ? await aiFlashcards(text, { count })
+      : { cards: [] };
+    res.json(result);
   } catch (e) {
-    console.error('Flashcards error:', e);
-    return res.status(500).json({ error: 'Failed to generate flashcards' });
+    res.status(500).json({ error: e.message });
   }
 });
 
-// Quiz
 app.post('/api/quiz', async (req, res) => {
-  const { text, count = 5, difficulty = 'medium', trackSources = false } = req.body || {};
-  if (!text) return res.status(400).json({ error: 'Missing "text" in body' });
+  const { text, count = 5, difficulty = 'medium' } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'Missing "text"' });
 
   try {
-    if (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY) {
-      const result = await aiQuiz(text, { count, difficulty, trackSources });
-      return res.json(result);
-    } else {
-      const quiz = generateQuiz(text, count);
-      return res.json({ quiz, note: 'Heuristic quiz used (no AI API key set)' });
-    }
+    const result = (process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY)
+      ? await aiQuiz(text, { count, difficulty })
+      : { quiz: [] };
+    res.json(result);
   } catch (e) {
-    console.error('Quiz error:', e);
-    return res.status(500).json({ error: 'Failed to generate quiz' });
+    res.status(500).json({ error: e.message });
   }
 });
 
-// 404 handler
+// 404 fallback
 app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
 
 // Global error handler
